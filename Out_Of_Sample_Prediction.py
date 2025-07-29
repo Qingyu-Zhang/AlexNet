@@ -86,20 +86,70 @@ else:
 
 print("开始预测...\n")
 
+import os
+from PIL import ImageDraw, ImageFont
+
+# 创建标注图片保存路径结构
+marked_root = "data/real_test_marked"
+os.makedirs(marked_root, exist_ok=True)
+
+for class_name in classes:
+    os.makedirs(os.path.join(marked_root, class_name), exist_ok=True)
+
+print("开始预测并标注图片...\n")
+
 with torch.no_grad():
     for i, (images, labels) in enumerate(test_loader):
         images = images.to(device)
-        labels = labels.to(device)
         outputs = model(images)
-        _, predicted = torch.max(outputs, 1)
 
-        pred_label = classes[predicted.item()]
+        # 获取概率前4的类别及其概率
+        probs = torch.softmax(outputs, dim=1)
+        topk_probs, topk_indices = torch.topk(probs, 4)
+
+        topk_probs = topk_probs[0].cpu().numpy()
+        topk_indices = topk_indices[0].cpu().numpy()
+        topk_classes = [classes[idx] for idx in topk_indices]
+
+        # 当前图片路径信息
+        image_path, _ = test_dataset.samples[i]
         true_label = classes[labels.item()]
-        print(f"Image {i+1}: Predicted: {pred_label} | True: {true_label}")
+        filename = os.path.basename(image_path)
+        folder_name = os.path.basename(os.path.dirname(image_path))
 
-        if predicted.item() == labels.item():
+        # 打印输出 Top-4 预测
+        print(f"Image {i+1}:")
+        for rank in range(4):
+            print(f"  Top {rank+1}: {topk_classes[rank]} ({topk_probs[rank]*100:.2f}%)")
+        print(f"  True Label: {true_label}")
+        print("-" * 40)
+
+        # 读取原图（不经过transform）
+        original_img = Image.open(image_path).convert("RGB")
+        draw = ImageDraw.Draw(original_img)
+
+        # 使用字体（可指定路径或使用默认）
+        try:
+            font = ImageFont.truetype("arial.ttf", 20)
+        except:
+            font = ImageFont.load_default()
+
+        # 写入前4预测类别和概率
+        y_offset = 5
+        for rank in range(4):
+            text = f"{rank+1}. {topk_classes[rank]}: {topk_probs[rank]*100:.1f}%"
+            draw.text((5, y_offset), text, fill="red", font=font)
+            y_offset += 22
+
+        # 保存到对应路径
+        save_path = os.path.join(marked_root, folder_name, filename)
+        original_img.save(save_path)
+
+        # 统计准确率
+        if topk_indices[0] == labels.item():
             correct += 1
         total += 1
+
 
 acc = 100 * correct / total
 print(f"\n总测试图像数: {total}")
